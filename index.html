@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>On‑Screen iPhone Emulator</title>
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --shell-bg: #0f1115;
+      --shell-outline: #1a1f29;
+      --glass: rgba(255,255,255,0.04);
+      --accent: #4f9cf9;
+      --text: #e7eaf0;
+      --muted: #a6b0c2;
+      --safe-top: 47px;   /* approx iPhone notch safe area */
+      --safe-bottom: 34px; /* home indicator area */
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 800px at 20% 0%, #0a0b0e 0%, #07080b 60%, #050608 100%);
+      color: var(--text);
+      font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden; /* kiosk style */
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      padding: .75rem 1rem;
+      background: #0b0d12;
+      border-bottom: 1px solid #121620;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .toolbar label { color: var(--muted); font-weight: 600; }
+    .toolbar input[type="text"]{
+      width: 40vw;
+      min-width: 320px;
+      max-width: 900px;
+      padding: .6rem .8rem;
+      border-radius: .6rem;
+      border: 1px solid #232a39;
+      background: #0e121a;
+      color: var(--text);
+      outline: none;
+    }
+    .toolbar select, .toolbar input[type="range"] {
+      background: #0e121a;
+      color: var(--text);
+      border: 1px solid #232a39;
+      border-radius: .6rem;
+      padding: .45rem .6rem;
+    }
+    .toolbar .btn {
+      padding: .55rem .8rem;
+      border: 1px solid #2a3346;
+      border-radius: .6rem;
+      background: linear-gradient(180deg, #131826, #0f1420);
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toolbar .btn:hover { border-color: #3a4661; }
+
+    .stage {
+      position: absolute;
+      inset: 60px 12px 12px; /* below toolbar */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Phone shell */
+    .phone-shell {
+      position: relative;
+      width: 430px;  /* default iPhone 15 Pro Max width (CSS px) */
+      height: 932px; /* default height */
+      border-radius: 56px;
+      background: var(--shell-bg);
+      box-shadow: 0 20px 60px rgba(0,0,0,.6), inset 0 0 0 2px var(--shell-outline);
+      transform-origin: top center;
+      transition: width .2s, height .2s, transform .15s ease-out;
+    }
+    .phone-shell:before {
+      /* glass edge sheen */
+      content: "";
+      position: absolute; inset: 0;
+      border-radius: 56px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 40%, rgba(255,255,255,.05) 60%, rgba(255,255,255,0));
+      pointer-events: none;
+    }
+
+    /* Dynamic Island / notch */
+    .notch {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      width: 160px; height: 36px;
+      background: #000;
+      border-radius: 20px;
+      box-shadow: 0 10px 20px rgba(0,0,0,.6);
+    }
+
+    /* Screen area */
+    .screen {
+      position: absolute; inset: 10px;
+      border-radius: 46px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .viewport {
+      position: absolute;
+      top: var(--safe-top);
+      left: 0; right: 0;
+      bottom: var(--safe-bottom);
+      overflow: hidden;
+      background: #000;
+    }
+
+    .viewport iframe {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      border: 0; background: #fff;
+      transform: translateZ(0); /* smooth */
+    }
+
+    .home-indicator {
+      position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+      width: 140px; height: 5px;
+      background: rgba(255,255,255,.6);
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    /* Orientation decorator (power/volume) */
+    .btns-left, .btns-right { position: absolute; top: 140px; width: 3px; height: 90px; background: #1b2130; border-radius: 2px; opacity: .7; }
+    .btns-left { left: -3px; }
+    .btns-right { right: -3px; height: 60px; top: 210px; }
+
+    /* Overlay for errors / messages */
+    .overlay {
+      position: absolute; inset: 0;
+      display: none;
+      align-items: center; justify-content: center; text-align: center;
+      padding: 40px;
+      background: rgba(8,10,15,.88);
+      color: var(--text);
+      z-index: 5;
+    }
+    .overlay.visible { display: flex; }
+    .overlay .card {
+      max-width: 520px;
+      background: #0e121a;
+      border: 1px solid #222a3a;
+      border-radius: 16px;
+      padding: 20px 22px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    .overlay h3 { margin: 0 0 .25rem; font-size: 18px; }
+    .overlay p { margin: 0; color: var(--muted); }
+
+    /* Tiny tooltip style */
+    .hint { font-size: 12px; color: var(--muted); margin-left: .35rem; }
+
+    /* Footer note */
+    .footnote { position: fixed; right: 10px; bottom: 8px; color: #7d8798; font-size: 12px; opacity: .85; }
+    .footnote a { color: #97b6ff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <label for="url">URL</label>
+    <input id="url" type="text" placeholder="https://example.com" />
+
+    <label for="device">Device</label>
+    <select id="device">
+      <option value="430x932">iPhone 15 Pro Max (430×932)</option>
+      <option value="390x844">iPhone 14/15 (390×844)</option>
+      <option value="375x812">iPhone 12/13 Mini (375×812)</option>
+      <option value="375x667">iPhone SE (375×667)</option>
+    </select>
+
+    <label for="zoom">Scale</label>
+    <input id="zoom" type="range" min="50" max="180" step="1" value="100" />
+    <span class="hint" id="zoomLabel">100%</span>
+
+    <button class="btn" id="go">Load</button>
+    <button class="btn" id="reload">Reload</button>
+    <button class="btn" id="rotate">Rotate</button>
+    <button class="btn" id="fit">Fit to Screen</button>
+  </div>
+
+  <div class="stage">
+    <div class="phone-shell" id="shell" data-orientation="portrait">
+      <div class="notch" aria-hidden="true"></div>
+      <div class="screen">
+        <div class="viewport">
+          <iframe id="frame" sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-top-navigation-by-user-activation"></iframe>
+        </div>
+        <div class="home-indicator"></div>
+      </div>
+      <div class="btns-left"></div>
+      <div class="btns-right"></div>
+      <div class="overlay" id="overlay">
+        <div class="card">
+          <h3>Can’t display this site inside an iframe.</h3>
+          <p>Some sites block embedding with <code>X-Frame-Options</code> or <code>Content-Security-Policy</code>. Try a different URL, or route through a simple reverse proxy that rewrites these headers.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">Tip: pass <code>?url=https://your.site</code> to auto-load.</div>
+
+  <script>
+    (function(){
+      const $shell = $('#shell');
+      const $frame = $('#frame');
+      const $overlay = $('#overlay');
+      const $zoom = $('#zoom');
+      const $zoomLabel = $('#zoomLabel');
+
+      const parseWH = (val) => { const [w,h] = val.split('x').map(Number); return {w,h}; };
+
+      function setDevice(size){
+        const {w,h} = parseWH(size);
+        const portrait = $shell.attr('data-orientation') !== 'landscape';
+        const W = portrait ? w : h;
+        const H = portrait ? h : w;
+        $shell.css({ width: W + 'px', height: H + 'px' });
+        // Update safe areas for smaller devices roughly
+        document.documentElement.style.setProperty('--safe-top', W <= 375 ? '44px' : '47px');
+      }
+
+      function applyScale(){
+        const s = Number($zoom.val()) / 100;
+        $zoomLabel.text(Math.round(s*100) + '%');
+        $shell.css('transform', 'scale(' + s + ')');
+      }
+
+      function fitToScreen(){
+        const stage = document.querySelector('.stage');
+        const st = getComputedStyle(stage);
+        const stageW = stage.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight);
+        const stageH = stage.clientHeight - parseFloat(st.paddingTop) - parseFloat(st.paddingBottom);
+        const shellW = $shell.outerWidth();
+        const shellH = $shell.outerHeight();
+        const scale = Math.min(stageW / shellW, stageH / shellH, 1.8); // limit max a bit
+        $zoom.val(Math.max(50, Math.floor(scale * 100)));
+        applyScale();
+      }
+
+      function loadUrl(u){
+        if(!/^https?:\/\//i.test(u)) u = 'https://' + u;
+        $overlay.removeClass('visible');
+        $frame.off('load');
+        let loaded = false;
+        $frame.on('load', function(){ loaded = true; });
+        $frame.attr('src', u);
+        // If blocked, the load event may never fire. Show message after a timeout.
+        setTimeout(() => { if(!loaded) $overlay.addClass('visible'); }, 2500);
+      }
+
+      function rotate(){
+        const current = $shell.attr('data-orientation');
+        const next = current === 'portrait' ? 'landscape' : 'portrait';
+        $shell.attr('data-orientation', next);
+        const val = $('#device').val();
+        setDevice(val); // swap width/height
+        fitToScreen();
+      }
+
+      // Controls
+      $('#device').on('change', function(){ setDevice(this.value); fitToScreen(); });
+      $('#zoom').on('input', applyScale);
+      $('#fit').on('click', fitToScreen);
+      $('#rotate').on('click', rotate);
+      $('#reload').on('click', () => { const src = $frame.attr('src'); if(src) loadUrl(src); });
+      $('#go').on('click', () => loadUrl($('#url').val().trim()));
+      $('#url').on('keypress', (e)=>{ if(e.which === 13) $('#go').click(); });
+
+      // Initialize from query string
+      const params = new URLSearchParams(location.search);
+      const preUrl = params.get('url');
+      if(preUrl) $('#url').val(preUrl);
+
+      setDevice($('#device').val());
+      fitToScreen();
+      applyScale();
+
+      if(preUrl) $('#go').click();
+
+      // Refit on resize
+      window.addEventListener('resize', fitToScreen);
+    })();
+  </script>
+</body>
+</html>
